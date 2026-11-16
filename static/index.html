@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>imggen</title>
+<style>
+  :root {
+    --bg: #000000;
+    --panel: #0a0a0a;
+    --card: #121212;
+    --line: #2a2a2a;
+    --text: #ffffff;
+    --muted: #9a9a9a;
+    --inv-bg: #ffffff;
+    --inv-text: #000000;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  .app { display: grid; grid-template-columns: minmax(0, 1.1fr) 400px; height: 100vh; }
+  @media (max-width: 900px) { .app { grid-template-columns: 1fr; height: auto; min-height: 100vh; } }
+
+  .chat { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  header b { font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); padding: 2px 8px; border-radius: 999px; }
+
+  .log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 82%; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); }
+  .msg.bot { align-self: flex-start; background: var(--card); }
+  .msg.me { align-self: flex-end; background: var(--inv-bg); color: var(--inv-text); border-color: var(--inv-bg); }
+  .msg .thumbs { display: flex; gap: 8px; margin-bottom: 8px; }
+  .msg .thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
+  .msg .meta { display: block; font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .msg.me .meta { color: #555; }
+  .msg img.gen { max-width: 220px; border-radius: 8px; border: 1px solid var(--line); margin-top: 8px; display: block; }
+
+  .inputs { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; background: var(--panel); }
+  .uploads { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .drop { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; cursor: pointer; background: var(--bg); min-height: 52px; }
+  .drop:hover, .drop.over { border-color: var(--text); }
+  .drop img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
+  .drop .lbl { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drop .clr { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0 4px; }
+
+  textarea, select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font: inherit; resize: none; }
+  textarea:focus, select:focus { outline: none; border-color: var(--text); }
+
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row textarea { flex: 1; }
+  button.primary { background: var(--inv-bg); color: var(--inv-text); border: 1px solid var(--inv-bg); border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; font: inherit; font-size: 12px; cursor: pointer; }
+  button.ghost:hover { border-color: var(--text); }
+
+  .side { display: flex; flex-direction: column; gap: 14px; padding: 16px; overflow-y: auto; background: var(--panel); }
+  .preview { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); min-height: 360px; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 8px; }
+  .preview img { max-width: 100%; max-height: 52vh; border-radius: 6px; display: block; }
+  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px; }
+  .bar-wrap { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); }
+  .bar-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+  .bar { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; margin-bottom: 8px; }
+  .bar > div { height: 100%; background: var(--text); transition: width 0.2s; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  th, td { padding: 4px 0; border-bottom: 1px solid #1b1b1b; text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  td:last-child, th:last-child { text-align: right; }
+  a.dl { display: inline-block; text-decoration: none; text-align: center; }
+  .warn { font-size: 12px; color: var(--muted); border: 1px solid var(--line); padding: 8px 10px; border-radius: 8px; }
+
+  .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.86); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .modal[hidden] { display: none; }
+  .modal-box { width: min(1080px, 100%); max-height: 90vh; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); gap: 12px; }
+  .modal-body { padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); }
+  .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat .v { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .hist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .hist-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; display: flex; flex-direction: column; }
+  .hist-card img.out { width: 100%; aspect-ratio: 9 / 14; object-fit: contain; background: #050505; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .hist-card .info { padding: 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .hist-card .m { font-size: 12px; font-weight: 600; word-break: break-all; }
+  .hist-card .sub { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
+  .hist-card .prompt { font-size: 11px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .hist-card .actions { display: flex; gap: 6px; margin-top: auto; padding-top: 4px; }
+  .hist-card .actions a, .hist-card .actions button { flex: 1; text-align: center; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="chat">
+    <header>
+      <div style="display:flex;align-items:center;gap:10px">
+        <b>imggen</b>
+        <span id="modelTag" class="tag">loading…</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="histBtn" class="ghost" type="button">History</button>
+        <button id="newBtn" class="ghost" type="button">New session</button>
+      </div>
+    </header>
+
+    <div id="log" class="log"></div>
+
+    <form id="form" class="inputs">
+      <div class="uploads">
+        <div id="frameDrop" class="drop" title="Upload, drop, or paste Frame Image">
+          <input id="frameInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          <img id="frameThumb" hidden alt="Frame">
+          <span id="frameLbl" class="lbl">+ Frame image</span>
+          <button id="frameClr" class="clr" type="button" hidden>×</button>
+        </div>
+        <div id="refDrop" class="drop" title="Upload or drop Reference Image">
+          <input id="refInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          <img id="refThumb" hidden alt="Reference">
+          <span id="refLbl" class="lbl">+ Reference image</span>
+          <button id="refClr" class="clr" type="button" hidden>×</button>
+        </div>
+      </div>
+
+      <textarea id="context" rows="2" placeholder="Video context (title, transcript, hook, offer)…"></textarea>
+
+      <div class="row">
+        <select id="modelSelect" title="Select image generation model" style="flex:1"></select>
+      </div>
+
+      <div class="row">
+        <textarea id="msg" rows="2" placeholder="Instruction (e.g. make it like reference, bold white text)…"></textarea>
+        <button id="sendBtn" class="primary" type="submit">Generate</button>
+      </div>
+    </form>
+  </section>
+
+  <aside class="side">
+    <div id="preview" class="preview"><div class="empty">Output image appears here.</div></div>
+
+    <div class="row" style="align-items:center">
+      <select id="ratio" style="flex:1">
+        <option value="9:16">9:16 (Reel / Shorts)</option>
+        <option value="1:1">1:1 (Square)</option>
+        <option value="16:9">16:9 (YouTube)</option>
+        <option value="3:4">3:4 (Portrait)</option>
+        <option value="4:3">4:3 (Landscape)</option>
+      </select>
+      <a id="dlBtn" class="primary dl" hidden>Download PNG</a>
+    </div>
+
+    <div class="bar-wrap">
+      <div class="bar-head"><span>Cost &amp; Call Guardrail</span><span id="budgetText">$0.0000 / $0.10</span></div>
+      <div class="bar"><div id="budgetBar" style="width:0%"></div></div>
+      <div class="bar-head" style="color:#9a9a9a;margin-bottom:0"><span>LLM Calls</span><span id="callsText">0 / 10</span></div>
+      <table>
+        <thead><tr><th>#</th><th>Model</th><th>Ratio</th><th>Cost</th></tr></thead>
+        <tbody id="costRows"><tr><td colspan="4" style="color:#9a9a9a">No calls yet</td></tr></tbody>
+      </table>
+    </div>
+
+    <div id="keyWarn" class="warn" hidden>Set <code>OPENROUTER_API_KEY</code> in <code>.env</code> before generating.</div>
+  </aside>
+</div>
+
+<div id="histModal" class="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <div style="display:flex;align-items:center;gap:10px">
+        <b>Generation History &amp; Model Costs</b>
+        <select id="histFilter" style="width:auto;padding:5px 9px;font-size:12px">
+          <option value="">All models</option>
+        </select>
+      </div>
+      <button id="histClose" class="ghost" type="button">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="stats">
+        <div class="stat"><div class="k">Total Spent</div><div id="histSpent" class="v">$0.0000</div></div>
+        <div class="stat"><div class="k">Generations</div><div id="histCount" class="v">0</div></div>
+        <div class="stat"><div class="k">Sessions</div><div id="histSessions" class="v">0</div></div>
+      </div>
+      <div class="bar-wrap">
+        <div class="bar-head"><span>Cost by Model</span></div>
+        <table>
+          <thead><tr><th>Model</th><th>Runs</th><th>Avg Cost</th><th>Total Cost</th></tr></thead>
+          <tbody id="histModelRows"><tr><td colspan="4" style="color:#9a9a9a">No generations yet</td></tr></tbody>
+        </table>
+      </div>
+      <div id="histGrid" class="hist-grid"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const S = { sid: null, session: null, frame: null, ref: null, busy: false };
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || `Error ${r.status}`);
+  return d;
+}
+
+function bindSlot(dropId, inputId, thumbId, lblId, clrId, key, emptyLabel) {
+  const drop = $(dropId), input = $(inputId), thumb = $(thumbId), lbl = $(lblId), clr = $(clrId);
+  const setFile = (f) => {
+    S[key] = f || null;
+    if (f) {
+      thumb.src = URL.createObjectURL(f);
+      thumb.hidden = false;
+      lbl.textContent = f.name || "Image attached";
+      clr.hidden = false;
+    } else {
+      thumb.hidden = true;
+      lbl.textContent = emptyLabel;
+      clr.hidden = true;
+    }
+  };
+  drop.addEventListener("click", (e) => { if (e.target !== clr) input.click(); });
+  input.addEventListener("change", (e) => { setFile(e.target.files[0]); input.value = ""; });
+  clr.addEventListener("click", (e) => { e.stopPropagation(); setFile(null); });
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    const f = [...(e.dataTransfer?.files || [])].find((x) => x.type.startsWith("image/"));
+    if (f) setFile(f);
+  });
+  return setFile;
+}
+
+const setFrame = bindSlot("frameDrop", "frameInput", "frameThumb", "frameLbl", "frameClr", "frame", "+ Frame image");
+const setRef = bindSlot("refDrop", "refInput", "refThumb", "refLbl", "refClr", "ref", "+ Reference image");
+
+function render() {
+  const s = S.session;
+  if (!s) return;
+  const msgs = s.messages || [];
+  $("log").innerHTML = msgs.length ? msgs.map((m) => {
+    if (m.role === "user") {
+      const imgs = [m.frame_url, m.ref_url].filter(Boolean).map((u) => `<img src="${u}" alt="">`).join("");
+      return `<div class="msg me">${imgs ? `<div class="thumbs">${imgs}</div>` : ""}${esc(m.text)}</div>`;
+    }
+    return `<div class="msg bot">${esc(m.text)}${m.image_url ? `<img class="gen" src="${m.image_url}" alt="Generated">` : ""}<span class="meta">${esc(m.model)} · $${Number(m.cost_usd || 0).toFixed(4)}</span></div>`;
+  }).join("") : `<div class="msg bot">Attach your <b>Frame Image</b>, <b>Reference Image</b>, and paste <b>Video Context</b>. Each click runs 1 strict API call.</div>`;
+  $("log").scrollTop = $("log").scrollHeight;
+
+  const latest = (s.outputs || []).slice(-1)[0];
+  if (latest) {
+    $("preview").innerHTML = `<img src="${latest}" alt="Output">`;
+    $("dlBtn").href = `${latest}?download=1`;
+    $("dlBtn").hidden = false;
+  } else {
+    $("preview").innerHTML = `<div class="empty">Output image appears here.</div>`;
+    $("dlBtn").hidden = true;
+  }
+
+  const pct = Math.min(100, (s.spent_usd / Math.max(s.budget_usd, 1e-6)) * 100);
+  $("budgetText").textContent = `$${s.spent_usd.toFixed(4)} / $${s.budget_usd.toFixed(2)}`;
+  $("budgetBar").style.width = `${pct}%`;
+  $("callsText").textContent = `${s.calls_used} / ${s.max_calls}`;
+  $("costRows").innerHTML = s.calls.length
+    ? s.calls.map((c) => `<tr><td>${c.index}</td><td>${esc(c.model)}</td><td>${esc(c.aspect_ratio)}</td><td>$${Number(c.cost_usd).toFixed(4)}</td></tr>`).join("")
+    : `<tr><td colspan="4" style="color:#9a9a9a">No calls yet</td></tr>`;
+  $("sendBtn").disabled = S.busy || s.calls_used >= s.max_calls || s.spent_usd >= s.budget_usd;
+}
+
+async function initSession() {
+  const cfg = await api("/api/config");
+  const models = cfg.models || [{ id: cfg.model, label: cfg.model }];
+  const sel = $("modelSelect");
+  const prev = sel.value;
+  sel.innerHTML = models.map((m) => `<option value="${esc(m.id)}">${esc(m.label)} — ${esc(m.id)}</option>`).join("");
+  sel.value = models.some((m) => m.id === prev) ? prev : cfg.model;
+  $("modelTag").textContent = sel.value;
+  $("keyWarn").hidden = cfg.has_key;
+  S.session = await api("/api/sessions", { method: "POST" });
+  S.sid = S.session.id;
+  setFrame(null); setRef(null);
+  $("context").value = ""; $("msg").value = "";
+  render();
+}
+
+$("modelSelect").addEventListener("change", () => {
+  $("modelTag").textContent = $("modelSelect").value;
+});
+
+$("newBtn").addEventListener("click", initSession);
+
+const H = { data: null };
+
+function renderHistory() {
+  const d = H.data;
+  if (!d) return;
+  $("histSpent").textContent = `$${Number(d.totals.total_spent_usd || 0).toFixed(4)}`;
+  $("histCount").textContent = d.totals.total_generations || 0;
+  $("histSessions").textContent = d.totals.total_sessions || 0;
+
+  $("histModelRows").innerHTML = d.by_model.length
+    ? d.by_model.map((m) => `<tr><td>${esc(m.model)}</td><td>${m.count}</td><td>$${Number(m.avg_cost_usd).toFixed(4)}</td><td>$${Number(m.total_cost_usd).toFixed(4)}</td></tr>`).join("")
+    : `<tr><td colspan="4" style="color:#9a9a9a">No generations yet</td></tr>`;
+
+  const filter = $("histFilter").value;
+  const items = filter ? d.items.filter((x) => x.model === filter) : d.items;
+  $("histGrid").innerHTML = items.length
+    ? items.map((x) => {
+        const dt = x.at ? new Date(x.at).toLocaleString() : "";
+        return `<div class="hist-card">
+          ${x.output_url ? `<img class="out" src="${esc(x.output_url)}" alt="Output" onclick="window.open('${esc(x.output_url)}','_blank')">` : ""}
+          <div class="info">
+            <div class="m">${esc(x.model)}</div>
+            <div class="sub"><span>$${Number(x.cost_usd || 0).toFixed(4)} · ${esc(x.aspect_ratio)}</span><span>${esc(dt)}</span></div>
+            ${x.prompt_summary ? `<div class="prompt" title="${esc(x.prompt_summary)}">${esc(x.prompt_summary)}</div>` : ""}
+            <div class="actions">
+              ${x.output_url ? `<a class="ghost" href="${esc(x.output_url)}?download=1">Download</a>` : ""}
+              <button class="ghost" type="button" onclick="resumeSession('${esc(x.session_id)}')">Resume</button>
+            </div>
+          </div>
+        </div>`;
+      }).join("")
+    : `<div class="empty" style="grid-column:1/-1">No matching generations found.</div>`;
+}
+
+async function openHistory() {
+  $("histModal").hidden = false;
+  H.data = await api("/api/history");
+  const prev = $("histFilter").value;
+  const models = (H.data.by_model || []).map((m) => m.model);
+  $("histFilter").innerHTML = `<option value="">All models</option>` + models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  if (models.includes(prev)) $("histFilter").value = prev;
+  renderHistory();
+}
+
+window.resumeSession = async (sid) => {
+  S.session = await api(`/api/sessions/${sid}`);
+  S.sid = S.session.id;
+  setFrame(null); setRef(null);
+  $("histModal").hidden = true;
+  render();
+};
+
+$("histBtn").addEventListener("click", openHistory);
+$("histClose").addEventListener("click", () => { $("histModal").hidden = true; });
+$("histModal").addEventListener("click", (e) => { if (e.target === $("histModal")) $("histModal").hidden = true; });
+$("histFilter").addEventListener("change", renderHistory);
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (S.busy || !S.sid) return;
+  const fd = new FormData();
+  fd.append("context", $("context").value);
+  fd.append("message", $("msg").value);
+  fd.append("aspect_ratio", $("ratio").value);
+  fd.append("model", $("modelSelect").value);
+  if (S.frame) fd.append("frame", S.frame);
+  if (S.ref) fd.append("ref", S.ref);
+
+  S.busy = true;
+  $("sendBtn").textContent = "Working…";
+  $("sendBtn").disabled = true;
+  try {
+    S.session = await api(`/api/sessions/${S.sid}/generate`, { method: "POST", body: fd });
+    $("msg").value = "";
+  } catch (err) {
+    S.session = {
+      ...S.session,
+      messages: [...(S.session.messages || []), { role: "assistant", text: `Blocked/Error: ${err.message}`, model: "guardrail", cost_usd: 0 }],
+    };
+  } finally {
+    S.busy = false;
+    $("sendBtn").textContent = "Generate";
+    render();
+  }
+});
+
+initSession();
+</script>
+</body>
+</html>
