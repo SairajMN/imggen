@@ -24,22 +24,24 @@ ROOT = Path(__file__).resolve().parent
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_IMAGES_URL = "https://openrouter.ai/api/v1/images"
 VALID_RATIOS = ("9:16", "1:1", "16:9", "3:4", "4:3")
+DEFAULT_IMAGE_MODEL = "openai/gpt-image-2"
+FALLBACK_MODELS = ("minimax/minimax-h3-image", "openai/gpt-image-2.5-sunburst")
 IMAGE_MODELS = [
-    {"id": "google/gemini-3.1-flash-image", "label": "Google Gemini 3.1 Flash Image / Nano Banana 2 (Recommended · Frame + Ref)"},
+    {"id": "openai/gpt-image-2", "label": "OpenAI GPT Image 2 (Default · Frame + Ref)"},
+    {"id": "google/gemini-3.1-flash-image", "label": "Google Gemini 3.1 Flash Image / Nano Banana 2 (Frame + Ref)"},
     {"id": "google/gemini-2.5-flash-image", "label": "Google Gemini 2.5 Flash Image / Nano Banana (Frame + Ref)"},
     {"id": "google/gemini-nano-banana-2.1", "label": "Google Nano Banana 2.1 (Frame + Ref)"},
     {"id": "google/gemini-3-pro-image", "label": "Google Gemini 3 Pro Image / Nano Banana Pro"},
     {"id": "openai/gpt-image-2.6-sunburst", "label": "OpenAI GPT Image 2.6 Sunburst (Frame + Ref)"},
-    {"id": "openai/gpt-image-2.5-sunburst", "label": "OpenAI GPT Image 2.5 Sunburst (Frame + Ref)"},
+    {"id": "openai/gpt-image-2.5-sunburst", "label": "OpenAI GPT Image 2.5 Sunburst (Fallback · Frame + Ref)"},
     {"id": "openai/gpt-image-2.5-flare", "label": "OpenAI GPT Image 2.5 Flare (Fast Frame + Ref)"},
-    {"id": "openai/gpt-image-2", "label": "OpenAI GPT Image 2 (Frame + Ref)"},
     {"id": "x-ai/grok-imagine-image-2.0", "label": "xAI Grok Imagine Image 2.0 (Frame + Ref)"},
     {"id": "black-forest-labs/flux-3-image", "label": "BFL FLUX 3 Image (Frame + Ref · $0.048)"},
     {"id": "black-forest-labs/flux-3-image-klein", "label": "BFL FLUX 3 Image Klein (Fast · $0.009)"},
     {"id": "qwen/qwen-image-3-pro", "label": "Qwen Image 3 Pro (Frame + Ref · $0.04)"},
     {"id": "qwen/qwen-image-3", "label": "Qwen Image 3 (Frame + Ref)"},
     {"id": "qwen/qwen-image-2.1-turbo", "label": "Qwen Image 2.1 Turbo (Fast Frame + Ref)"},
-    {"id": "minimax/minimax-h3-image", "label": "MiniMax H3 Image (Frame + Ref)"},
+    {"id": "minimax/minimax-h3-image", "label": "MiniMax H3 Image (Fallback · Frame + Ref)"},
     {"id": "krea/k3-edit", "label": "Krea K3 Edit (Frame + Ref)"},
     {"id": "krea/krea-2-medium-turbo", "label": "Krea 2 Medium Turbo (Fast Frame + Ref)"},
     {"id": "sourceful/riverflow-v2.5-fast", "label": "Sourceful Riverflow V2.5 Fast (Frame + Ref)"},
@@ -57,7 +59,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
 
     openrouter_api_key: str = ""
-    image_model: str = "recraft/recraft-v4.1-flash-v2"
+    image_model: str = "openai/gpt-image-2"
     estimated_cost_per_image: float = 0.007
     budget_usd: float = 0.10
     max_calls: int = 10
@@ -162,24 +164,16 @@ def _call_openrouter_images(
     return r
 
 
-def _call_openrouter(
+def _request_openrouter_once(
+    headers: dict[str, str],
+    model: str,
     prompt_text: str,
-    *,
-    model: str | None = None,
     aspect_ratio: str,
     frame_bytes: bytes | None,
     ref_bytes: bytes | None,
     ref_colors: list[list[int]] | None,
 ) -> tuple[bytes, float, str]:
-    if not settings.openrouter_api_key:
-        raise HTTPException(400, "OPENROUTER_API_KEY is not set in .env")
-
-    model = (model or "").strip() or settings.image_model
     is_recraft_text_only = "recraft-v4.1-flash" in model
-    headers = {
-        "Authorization": f"Bearer {settings.openrouter_api_key}",
-        "Content-Type": "application/json",
-    }
 
     if any(k in model for k in IMAGES_API_HINTS):
         r = _call_openrouter_images(headers, model, prompt_text, aspect_ratio, frame_bytes, ref_bytes)
@@ -230,6 +224,39 @@ def _call_openrouter(
         else f"Generated with {model}."
     )
     return img_bytes, cost, note
+
+
+def _call_openrouter(
+    prompt_text: str,
+    *,
+    model: str | None = None,
+    aspect_ratio: str,
+    frame_bytes: bytes | None,
+    ref_bytes: bytes | None,
+    ref_colors: list[list[int]] | None,
+) -> tuple[bytes, float, str, str]:
+    if not settings.openrouter_api_key:
+        raise HTTPException(400, "OPENROUTER_API_KEY is not set in .env")
+
+    chosen = (model or "").strip() or settings.image_model
+    candidates = [chosen, *(m for m in FALLBACK_MODELS if m != chosen)] if chosen == settings.image_model else [chosen]
+    headers = {
+        "Authorization": f"Bearer {settings.openrouter_api_key}",
+        "Content-Type": "application/json",
+    }
+    last_err: HTTPException | None = None
+    for idx, candidate in enumerate(candidates):
+        try:
+            img_bytes, cost, note = _request_openrouter_once(
+                headers, candidate, prompt_text, aspect_ratio, frame_bytes, ref_bytes, ref_colors
+            )
+            if idx > 0:
+                note = f"{note} (fallback from {chosen})"
+            return img_bytes, cost, note, candidate
+        except HTTPException as exc:
+            last_err = exc
+    assert last_err is not None
+    raise last_err
 
 
 def _out(s: dict[str, Any]) -> dict[str, Any]:
@@ -305,11 +332,15 @@ def get_history() -> dict[str, Any]:
             calls = s.get("calls") or []
             user_msgs = [m for m in (s.get("messages") or []) if m.get("role") == "user"]
 
+            out_idx = 0
             for idx, c in enumerate(calls):
                 model = c.get("model") or settings.image_model
                 cost = round(float(c.get("cost_usd", 0.0)), 6)
-                um = user_msgs[idx] if idx < len(user_msgs) else (user_msgs[-1] if user_msgs else {})
-                output_url = outputs[idx] if idx < len(outputs) else None
+                ok = c.get("ok", True)
+                um = user_msgs[out_idx] if out_idx < len(user_msgs) else (user_msgs[-1] if user_msgs else {})
+                output_url = outputs[out_idx] if ok and out_idx < len(outputs) else None
+                if ok:
+                    out_idx += 1
 
                 items.append({
                     "session_id": sid,
@@ -408,7 +439,7 @@ async def generate(
         "at": datetime.now(UTC).isoformat(),
     })
 
-    img_bytes, cost_usd, note = _call_openrouter(
+    img_bytes, cost_usd, note, used_model = _call_openrouter(
         prompt_text,
         model=chosen_model,
         aspect_ratio=aspect_ratio,
@@ -425,7 +456,7 @@ async def generate(
     s["outputs"].append(out_url)
     s["calls"].append({
         "index": len(s["calls"]) + 1,
-        "model": chosen_model,
+        "model": used_model,
         "aspect_ratio": aspect_ratio,
         "cost_usd": cost_usd,
         "ok": True,
@@ -436,7 +467,7 @@ async def generate(
         "text": note,
         "image_url": out_url,
         "cost_usd": cost_usd,
-        "model": chosen_model,
+        "model": used_model,
         "at": datetime.now(UTC).isoformat(),
     })
     with LOCK:

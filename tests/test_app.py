@@ -97,6 +97,81 @@ def test_max_calls_guardrail(monkeypatch):
     assert "Call limit reached" in r2.json()["detail"]
 
 
+def test_fallback_order_when_default_fails(monkeypatch):
+    monkeypatch.setattr(imggen_app.settings, "image_model", "openai/gpt-image-2")
+    monkeypatch.setattr(imggen_app.settings, "budget_usd", 1.0)
+    monkeypatch.setattr(imggen_app.settings, "max_calls", 5)
+
+    tried = []
+    b64 = base64.b64encode(_png_bytes((200, 100, 50))).decode()
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        model = json["model"]
+        tried.append(model)
+        if model in ("openai/gpt-image-2", "minimax/minimax-h3-image"):
+            return httpx.Response(502, json={"error": {"message": f"{model} unavailable"}})
+        return httpx.Response(200, json={"data": [{"b64_json": b64}], "usage": {"cost": 0.01}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = TestClient(imggen_app.app)
+    sid = client.post("/api/sessions").json()["id"]
+    r = client.post(
+        f"/api/sessions/{sid}/generate",
+        data={"context": "Saros launch", "message": "make it look like this"},
+        files={"ref": ("ref.png", _png_bytes((240, 240, 240)), "image/png")},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert tried == ["openai/gpt-image-2", "minimax/minimax-h3-image", "openai/gpt-image-2.5-sunburst"]
+    assert body["calls_used"] == 1
+    assert body["calls"][-1]["model"] == "openai/gpt-image-2.5-sunburst"
+    assert body["calls"][-1]["ok"] is True
+    assert "fallback" in body["messages"][-1]["text"]
+
+    # Explicit non-default model does not trigger fallback
+    tried.clear()
+    r2 = client.post(
+        f"/api/sessions/{sid}/generate",
+        data={"context": "Saros launch", "model": "minimax/minimax-h3-image"},
+    )
+    assert r2.status_code == 502
+    assert tried == ["minimax/minimax-h3-image"]
+
+
+def test_fallback_order_when_default_fails(monkeypatch):
+    monkeypatch.setattr(imggen_app.settings, "image_model", "openai/gpt-image-2")
+    monkeypatch.setattr(imggen_app.settings, "budget_usd", 1.0)
+    monkeypatch.setattr(imggen_app.settings, "max_calls", 5)
+
+    tried = []
+    b64 = base64.b64encode(_png_bytes((200, 100, 50))).decode()
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        model = json["model"]
+        tried.append(model)
+        if model in ("openai/gpt-image-2", "minimax/minimax-h3-image"):
+            return httpx.Response(502, json={"error": {"message": f"{model} unavailable"}})
+        return httpx.Response(200, json={"data": [{"b64_json": b64}], "usage": {"cost": 0.01}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    client = TestClient(imggen_app.app)
+    sid = client.post("/api/sessions").json()["id"]
+    r = client.post(
+        f"/api/sessions/{sid}/generate",
+        data={"context": "Saros launch", "message": "make it look like this"},
+        files={"ref": ("ref.png", _png_bytes((240, 240, 240)), "image/png")},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert tried == ["openai/gpt-image-2", "minimax/minimax-h3-image", "openai/gpt-image-2.5-sunburst"]
+    assert body["calls_used"] == 1
+    assert body["calls"][-1]["model"] == "openai/gpt-image-2.5-sunburst"
+    assert body["calls"][-1]["ok"] is True
+    assert "fallback" in body["messages"][-1]["text"]
+
+
 def test_images_endpoint_for_gpt_image_and_fallback(monkeypatch):
     out_png = _png_bytes((12, 34, 56), (128, 128))
     b64 = base64.b64encode(out_png).decode()
@@ -215,3 +290,36 @@ def test_history_aggregates_models_and_costs(monkeypatch):
     assert len(hist["by_model"]) == 2
     assert len(hist["items"]) == 2
     assert hist["items"][0]["output_url"] is not None
+
+
+def test_default_model_fallback_order(monkeypatch):
+    out_png = _png_bytes((40, 50, 60), (128, 128))
+    b64 = base64.b64encode(out_png).decode()
+    tried: list[str] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        m = json["model"]
+        tried.append(m)
+        if m in ("openai/gpt-image-2", "minimax/minimax-h3-image"):
+            return httpx.Response(502, json={"error": {"message": f"{m} unavailable"}})
+        return httpx.Response(200, json={"data": [{"b64_json": b64}], "usage": {"cost": 0.03}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(imggen_app.settings, "budget_usd", 1.0)
+    monkeypatch.setattr(imggen_app.settings, "image_model", "openai/gpt-image-2")
+
+    client = TestClient(imggen_app.app)
+    sid = client.post("/api/sessions").json()["id"]
+    r = client.post(f"/api/sessions/{sid}/generate", data={"context": "Street Fighter 6"})
+    assert r.status_code == 200
+    assert tried == ["openai/gpt-image-2", "minimax/minimax-h3-image", "openai/gpt-image-2.5-sunburst"]
+    assert r.json()["calls"][-1]["model"] == "openai/gpt-image-2.5-sunburst"
+
+    # Explicit non-default model does not trigger fallback
+    tried.clear()
+    r2 = client.post(
+        f"/api/sessions/{sid}/generate",
+        data={"context": "Street Fighter 6", "model": "minimax/minimax-h3-image"},
+    )
+    assert r2.status_code == 502
+    assert tried == ["minimax/minimax-h3-image"]
